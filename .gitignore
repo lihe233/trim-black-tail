@@ -24,5 +24,6 @@ desktop.ini
 .idea/
 .vscode/
 
-# 构建产物
+# 构建产物与本地下好的 ffmpeg（不入库）
 dist/
+bin/

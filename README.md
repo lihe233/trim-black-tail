@@ -26,13 +26,17 @@
 
 ## 依赖
 
-- Python 3.8+，只用到标准库，无需 `pip install`
-- [ffmpeg / ffprobe](https://ffmpeg.org/download.html) 需在 `PATH` 中
+- Python 3.8+（**Windows 发布包已内置 3.13 便携版**，免安装；自己跑源码才需要），只用到标准库，无需 `pip install`
+- **ffmpeg / ffprobe**：不用提前装。第一次运行时如果没找到，脚本会问一句「自动下载？」，回车就会下到工具目录的 `bin\` 里（约 120MB，只下一次），之后一直复用。也可以自己装好放进 `PATH`，脚本会优先用自带的 `bin\`，其次才是 `PATH`。
 - 可选：NVIDIA 显卡 + 较新的 ffmpeg（使用 `h264_nvenc` 加速导出）
+
+> 为什么东西不直接打进压缩包：两个 exe 加起来 430MB 以上，压完还是上百 MB，GitHub 单文件上限 100MB 过不去，下载体验也差。按需下载一次更划算。
 
 ## 快速开始
 
 > **下载完不知道点哪个？就点 `01_开始裁剪_双击这里.bat`。** 根目录只有这一个 bat 是入口，其它工具都收在 `tools\` 里，用不到可以完全不管。
+
+> 发布包里已经带了便携 Python（`runtime\python`，解压即用）和按需下载的 ffmpeg，**下载解压就能跑，不用装任何环境**。第一次运行时它只会问你一句「要下 ffmpeg 吗」，回车即可。
 
 ### Windows 图形化入口（推荐）
 
@@ -173,6 +177,9 @@ python trim_black_tail.py -i D:\素材 --retry-failed report.csv
 | `--skip-undetected` | 关 | 未检出黑场的文件不复制到输出 |
 | `--lang` | `zh` | 输出语言：`zh` 中文 / `en` 英文 |
 | `--report` | — | 结果写成 CSV |
+| `--ffmpeg-dir` | — | 指定 ffmpeg / ffprobe 所在目录（默认先找本工具 `bin\`，再找 `PATH`） |
+| `--no-download` | 关 | 缺 ffmpeg 时不联网下载，直接报错（脚本 / CI 用） |
+| `--install-ffmpeg` | 关 | 只下载安装 ffmpeg 到 `bin\` 然后退出，不处理视频 |
 
 完整参数见 `python trim_black_tail.py --help`。
 

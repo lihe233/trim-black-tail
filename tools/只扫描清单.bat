@@ -19,16 +19,45 @@ if not exist "%SCRIPT%" (
   goto :done
 )
 
-set "PY="
+rem 优先用发布包自带的便携 Python（解压即用，无需安装）
+set "PY=%ROOT%\runtime\python\python.exe"
+if not exist "%PY%" set "PY="
 for /f "delims=" %%P in ('dir /b /s "%USERPROFILE%\.workbuddy\binaries\python\versions\python.exe" 2^>nul') do if not defined PY set "PY=%%P"
 for /f "delims=" %%P in ('dir /b /s "%LOCALAPPDATA%\Programs\Python\python.exe" 2^>nul') do if not defined PY set "PY=%%P"
 for /f "delims=" %%P in ('dir /b /s "C:/Python*/python.exe" 2^>nul') do if not defined PY set "PY=%%P"
 if not defined PY set "PY=python"
 "%PY%" --version >nul 2>&1
 if errorlevel 1 (
-  echo [错误/Error] 找不到 Python / Python not found.
+  echo [错误/Error] 没有可用的 Python / no usable Python found.
+  echo   发布包自带 runtime\python\python.exe；若被删掉或只复制了 bat，请重新解压整个包。
+  echo   也可以自己装 Python 3.10+ 并加进 PATH。
   goto :done
 )
+
+rem ===== ffmpeg / ffprobe：本机没有就先下载一次（约 60MB，只下一次）=====
+set "NEEDFF="
+if exist "%ROOT%\bin\ffmpeg.exe" if exist "%ROOT%\bin\ffprobe.exe" goto :haveff
+where ffmpeg >nul 2>&1
+if errorlevel 1 set "NEEDFF=1"
+where ffprobe >nul 2>&1
+if errorlevel 1 set "NEEDFF=1"
+if not defined NEEDFF goto :haveff
+echo.
+echo 本机没找到 ffmpeg / ffprobe，视频处理要用它们。可以现在自动下载：
+echo   约 60MB，存到工具目录的 bin 文件夹，只下一次，以后直接用。
+echo   也可以自己装（winget install Gyan.FFmpeg），装完重新运行本 bat。
+set /p "DL=现在下载？(Y/n，回车=下载): "
+if /i "%DL%"=="n" (
+  echo 已跳过下载，处理好 ffmpeg 后再运行。
+  goto :done
+)
+"%PY%" "%SCRIPT%" --install-ffmpeg
+if errorlevel 1 (
+  echo.
+  echo [错误] ffmpeg 下载失败。检查网络后重试，或手动下载解压到 bin 文件夹。
+  goto :done
+)
+:haveff
 
 set "SRC=%~1"
 if not defined SRC (

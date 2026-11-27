@@ -26,15 +26,19 @@ Built for batch editing: a whole season of footage each ends with seconds to min
 
 ## Requirements
 
-- Python 3.8+, standard library only — no `pip install` needed
-- [ffmpeg / ffprobe](https://ffmpeg.org/download.html) on `PATH`
+- Python 3.8+ (**the Windows release bundles a portable 3.13** — nothing to install; only needed if you run the source yourself), standard library only, no `pip install`
+- **ffmpeg / ffprobe**: no manual install. On first run, if they are missing, the script offers to download them into the tool's `bin\` folder (~120MB, one time). If you prefer your own copy, put it on `PATH` — the bundled `bin\` wins, `PATH` is the fallback.
 - Optional: an NVIDIA GPU and a recent ffmpeg for `h264_nvenc` export
+
+> Why the binaries are not shipped inside the zip: the two exes total 430MB+, and the archive would still be far over GitHub's 100MB per-file limit. A one-time download is the better trade.
 
 ## Quick start
 
 ### Windows GUI entry points
 
 > **Not sure what to click after downloading? Click `01_开始裁剪_双击这里.bat`.** It is the only entry point in the root folder; every other tool lives in `tools\` and can be ignored.
+
+> The release ships with a portable Python (`runtime\python`, no install needed) and downloads ffmpeg on demand, so **unzip and run — no environment setup at all**. The only prompt on first run is a single "download ffmpeg?" — press Enter.
 
 Double-click it, drag a folder into the window, press Enter, then answer the prompts (pressing Enter on every prompt uses the defaults). When it finishes you can drop the next folder in.
 
@@ -171,6 +175,9 @@ The prefilter is symmetric too: black mode asks whether the last frame is bright
 | `--skip-undetected` | off | Do not copy files where nothing was detected |
 | `--lang` | `zh` | Output language: `zh` / `en` |
 | `--report` | — | Write the results to a CSV |
+| `--ffmpeg-dir` | — | Folder holding ffmpeg / ffprobe (default: bundled `bin\`, then `PATH`) |
+| `--no-download` | off | Never auto-download ffmpeg; fail instead (scripts / CI) |
+| `--install-ffmpeg` | off | Only download ffmpeg into `bin\` and exit |
 
 Full list: `python trim_black_tail.py --help`.
 

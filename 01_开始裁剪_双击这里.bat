@@ -14,6 +14,7 @@ echo  怎么用：把素材文件夹直接拖进本窗口，回车。
 echo          参数一路回车就是默认值，第一次填完会记住，下次只问一句。
 echo          成片输出到“文件夹名_no_black”，原片不会被修改。
 echo          只想先看清单不导出：运行 tools\只扫描清单.bat
+echo          第一次运行若没装 ffmpeg，会问你一句并自动下载（约 60MB，只下一次）。
 echo.
 
 set "SCRIPT=%~dp0trim_black_tail.py"
@@ -22,17 +23,45 @@ if not exist "%SCRIPT%" (
   goto :fail
 )
 
-set "PY="
+rem 优先用发布包自带的便携 Python（解压即用，无需安装）
+set "PY=%~dp0runtime\python\python.exe"
+if not exist "%PY%" set "PY="
 for /f "delims=" %%P in ('dir /b /s "%USERPROFILE%\.workbuddy\binaries\python\versions\python.exe" 2^>nul') do if not defined PY set "PY=%%P"
 for /f "delims=" %%P in ('dir /b /s "%LOCALAPPDATA%\Programs\Python\python.exe" 2^>nul') do if not defined PY set "PY=%%P"
 for /f "delims=" %%P in ('dir /b /s "C:/Python*/python.exe" 2^>nul') do if not defined PY set "PY=%%P"
 if not defined PY set "PY=python"
 "%PY%" --version >nul 2>&1
 if errorlevel 1 (
-  echo [错误/Error] 找不到 Python / Python not found.
-  echo   请安装 Python 3 并勾选 Add to PATH，或把 python.exe 所在目录加进 PATH。
+  echo [错误/Error] 没有可用的 Python / no usable Python found.
+  echo   发布包里自带 runtime\python\python.exe；如果它被删了，或者只复制了 bat，
+  echo   请重新解压整个压缩包。也可以自己装 Python 3.10+ 并加进 PATH。
   goto :fail
 )
+
+rem ===== ffmpeg / ffprobe：本机没有就先下载一次（约 60MB，只下一次）=====
+set "NEEDFF="
+if exist "%~dp0bin\ffmpeg.exe" if exist "%~dp0bin\ffprobe.exe" goto :haveff
+where ffmpeg >nul 2>&1
+if errorlevel 1 set "NEEDFF=1"
+where ffprobe >nul 2>&1
+if errorlevel 1 set "NEEDFF=1"
+if not defined NEEDFF goto :haveff
+echo.
+echo 本机没找到 ffmpeg / ffprobe，视频处理要用它们。可以现在自动下载：
+echo   约 60MB，存到本目录 bin 文件夹，只下一次，以后直接用。
+echo   也可以自己装（winget install Gyan.FFmpeg），装完重新运行本 bat。
+set /p "DL=现在下载？(Y/n，回车=下载): "
+if /i "%DL%"=="n" (
+  echo 已跳过下载，处理好 ffmpeg 后再运行。
+  goto :done
+)
+"%PY%" "%SCRIPT%" --install-ffmpeg
+if errorlevel 1 (
+  echo.
+  echo [错误] ffmpeg 下载失败。检查网络后重试，或手动下载解压到 bin 文件夹。
+  goto :fail
+)
+:haveff
 
 set "FIRST=%~1"
 set "CFG=%~dp0trim_config.ini"
@@ -155,6 +184,14 @@ echo.
 
 set "TRIM_LANG=%LANG%"
 "%PY%" "%SCRIPT%" -i "%SRC%" -o "%OUT%" --scan-tail %SCAN% --workers %WORKERS% --dark-luma %LUMA% --curve-min-drop %DROP% --binary-levels %LEVELS% --core-threshold %CORE% --core-min-black %CMIN% --flash-gap %FGAP% --encoder %ENC% --prefilter-luma %PREFILTER% --flash %FLASH% %HEADARG% %SKIPARG% --report "%REPORT%"
+
+if errorlevel 1 (
+  echo.
+  echo [错误/Error] 上面有报错。常见原因：没装 Python / ffmpeg 下载失败 / 磁盘写满。
+  echo   处理好后重新运行本 bat 即可，已完成的文件会自动跳过。
+  echo   按任意键继续 / press any key to continue...
+  pause >nul
+)
 
 echo.
 echo 本文件夹完成 / done：%OUT%

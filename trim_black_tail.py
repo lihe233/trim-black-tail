@@ -46,24 +46,29 @@ auto 模式的异常与标记机制：
   python trim_black_tail.py -i D:\\素材 -o D:\\成片 --tail 2
   python trim_black_tail.py -i D:\\素材 -o D:\\成片 --dry-run --report D:\\素材\\清单.csv
 
-依赖：ffmpeg / ffprobe 在 PATH 中。
+依赖：ffmpeg / ffprobe。缺失时会自动下载到本工具 bin\ 下（约 60MB，一次），
+      也会直接用 PATH 里已有的；Python 只用标准库。
 """
 
 import argparse
 import csv
 import ctypes
+import gzip
 import os
 import re
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
+import urllib.request
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # ===== 项目信息（署名、仓库、主页，按需修改这几行即可）=====
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __author__ = "lihe233"
 __repo__ = "https://github.com/lihe233/trim-black-tail"
 __home__ = "https://github.com/lihe233"
@@ -232,12 +237,249 @@ def print_banner() -> None:
     log(f"[trim] {bar}")
 
 
-def which(tool: str) -> str:
-    p = shutil.which(tool)
-    if not p:
-        raise RuntimeError(H(f"找不到 {tool}，请先安装 ffmpeg 并确保它在 PATH 中",
-                                f"{tool} not found — install ffmpeg and make sure it is on PATH"))
-    return p
+# ===== ffmpeg / ffprobe：定位 + 首次运行时自动下载 =====
+# 二进制不随发布包分发：单个 ffmpeg.exe 就 100MB 以上，两个加起来 400MB+，
+# 既压不小也过不了 GitHub 单文件 100MB 的限制。改成缺失时按需下载到
+# <工具目录>\bin\，只解出需要的两个 exe，之后一直复用。
+FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+FFMPEG_MB = 60
+NEED_BINS = ("ffmpeg", "ffprobe")
+
+# 首选源：npmmirror 的 ffmpeg-static 二进制镜像（国内 CDN）。
+# 两个 gz 各约 30MB，实测几十秒；比下 100MB+ 的整包快一个数量级。
+# 版本写死 b6.1.1（ffmpeg 6.1.1 essentials 构建），已确认带 libx264 / libx265 /
+# h264_nvenc / blackframe / signalstats，够本工具全部用法。要升级改这行路径即可。
+NPMMIRROR_BASE = "https://registry.npmmirror.com/-/binary/ffmpeg-static/b6.1.1"
+NPMMIRROR_FILES = {
+    "ffmpeg": NPMMIRROR_BASE + "/ffmpeg-win32-x64.gz",
+    "ffprobe": NPMMIRROR_BASE + "/ffprobe-win32-x64.gz",
+}
+
+# 备选源：static 构建（不能换 shared 版，那样只掏出 exe 会缺 dll）
+FALLBACK_ZIPS = (
+    ("BtbN/ghproxy",
+     "https://ghproxy.net/https://github.com/BtbN/FFmpeg-Builds/releases/download/"
+     "latest/ffmpeg-master-latest-win64-gpl.zip"),
+    ("gyan.dev", FFMPEG_URL),
+)
+
+
+def tool_bin_dirs(explicit: str | None = None) -> list[Path]:
+    """按优先级列出可能放 ffmpeg.exe / ffprobe.exe 的目录。"""
+    dirs: list[Path] = []
+    if explicit:
+        dirs.append(Path(explicit).expanduser())
+    here = Path(__file__).resolve().parent
+    dirs.append(here / "bin")
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            dirs.append(Path(local) / "trim-black-tail" / "bin")
+    else:
+        dirs.append(Path.home() / ".local" / "bin")
+    return dirs
+
+
+def find_tool(tool: str, dirs: list[Path]) -> str | None:
+    """先看工具自带的 bin\\，再交给 PATH。"""
+    names = [tool + ".exe", tool] if os.name == "nt" else [tool]
+    for d in dirs:
+        for n in names:
+            p = d / n
+            if p.is_file():
+                return str(p)
+    return shutil.which(tool)
+
+
+def _manual_hint(missing: list[str]) -> str:
+    dirs = tool_bin_dirs()
+    main_dir = dirs[1] if len(dirs) > 2 else dirs[0]
+    alt = dirs[-1]
+    return H(
+        f"找不到 {' / '.join(missing)}。三种办法：\n"
+        f"  1) 让脚本自动下载（运行时直接回车即可）；\n"
+        f"  2) 手动下载 {FFMPEG_URL}\n"
+        f"     解压后把 bin\\ffmpeg.exe 和 bin\\ffprobe.exe 放进：{main_dir}\n"
+        f"     （这个目录没有写权限的话，放这里也行：{alt}）\n"
+        f"  3) 装好后把 ffmpeg 的 bin 目录加进系统 PATH。\n"
+        f"     （Windows 也可以执行 winget install Gyan.FFmpeg）",
+        f"{' / '.join(missing)} not found. Three options:\n"
+        f"  1) Let this script download it (just press Enter);\n"
+        f"  2) Download {FFMPEG_URL}\n"
+        f"     and put bin\\ffmpeg.exe + bin\\ffprobe.exe into: {main_dir}\n"
+        f"     (if that folder is read-only, use: {alt})\n"
+        f"  3) Install ffmpeg and add its bin folder to PATH.\n"
+        f"     (On Windows: winget install Gyan.FFmpeg)",
+    )
+
+
+def _interactive() -> bool:
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _download_file(url: str, dst: Path, tag: str = "") -> None:
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0 (trim-black-tail)"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(dst, "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        got = 0
+        shown = -1
+        while True:
+            chunk = r.read(1 << 18)
+            if not chunk:
+                break
+            f.write(chunk)
+            got += len(chunk)
+            if total:
+                pct = got * 100 // total
+                if pct != shown:
+                    shown = pct
+                    print(f"\r  {tag:16s} {pct:3d}%  {got / 1048576:5.1f} / "
+                          f"{total / 1048576:.1f} MB", end="", flush=True)
+    print("\r" + " " * 52 + "\r", end="", flush=True)
+
+
+def _extract_bins(zip_path: Path, dest: Path) -> None:
+    """只从压缩包里掏出 bin/ffmpeg.exe 与 bin/ffprobe.exe，其余不落盘。"""
+    found: dict[str, zipfile.ZipInfo] = {}
+    with zipfile.ZipFile(zip_path) as z:
+        for info in z.infolist():
+            norm = info.filename.replace("\\", "/").lower()
+            base = norm.rsplit("/", 1)[-1]
+            if base in ("ffmpeg.exe", "ffprobe.exe") and "/bin/" in norm and base not in found:
+                found[base] = info
+        missing = [n for n in ("ffmpeg.exe", "ffprobe.exe") if n not in found]
+        if missing:
+            raise RuntimeError(H(f"压缩包里没有 {'/'.join(missing)}，可能是下载不完整",
+                                 f"{'/'.join(missing)} missing in the archive "
+                                 f"- the download may be incomplete"))
+        dest.mkdir(parents=True, exist_ok=True)
+        for base, info in found.items():
+            with z.open(info) as src, open(dest / base, "wb") as out:
+                shutil.copyfileobj(src, out)
+
+
+def _writable_install_dir(explicit: str | None = None) -> Path:
+    cands: list[Path] = []
+    if explicit:
+        cands.append(Path(explicit).expanduser())
+    cands.append(Path(__file__).resolve().parent / "bin")
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            cands.append(Path(local) / "trim-black-tail" / "bin")
+    for d in cands:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            probe = d / ".write_test"
+            probe.write_bytes(b"")
+            probe.unlink()
+            return d
+        except OSError:
+            continue
+    raise RuntimeError(H(f"没有可写的目录来放 ffmpeg，请手动放到 {cands[0]}",
+                         f"no writable folder for ffmpeg; put it in {cands[0]} manually"))
+
+
+def _verify_installed(target: Path) -> tuple[str, str]:
+    exe = ".exe" if os.name == "nt" else ""
+    ffmpeg = target / ("ffmpeg" + exe)
+    ffprobe = target / ("ffprobe" + exe)
+    for p, what in ((ffmpeg, "ffmpeg"), (ffprobe, "ffprobe")):
+        if not p.is_file():
+            raise RuntimeError(H(f"下载后缺少 {what}", f"{what} missing after download"))
+        r = run_proc([str(p), "-version"], capture=True)
+        if r.returncode != 0:
+            raise RuntimeError(H(
+                f"{what} 跑不起来（退出码 {r.returncode}），可能下载不完整，"
+                f"或系统缺少 VC++ 运行库",
+                f"{what} cannot run (exit {r.returncode}); broken download or "
+                f"missing VC++ runtime"))
+    return str(ffmpeg), str(ffprobe)
+
+
+def _install_from_mirror(target: Path) -> None:
+    """npmmirror：两个 .gz 分别解出 ffmpeg.exe / ffprobe.exe。"""
+    target.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as td:
+        for i, tool in enumerate(NEED_BINS, 1):
+            gz = Path(td) / (tool + ".gz")
+            _download_file(NPMMIRROR_FILES[tool], gz,
+                           tag="[%d/%d] %s" % (i, len(NEED_BINS), tool))
+            with gzip.open(gz, "rb") as src, open(target / (tool + ".exe"), "wb") as out:
+                shutil.copyfileobj(src, out)
+
+
+def _install_from_zip(url: str, target: Path) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        zp = Path(td) / "ffmpeg.zip"
+        _download_file(url, zp, tag="zip")
+        _extract_bins(zp, target)
+
+
+def install_ffmpeg(target: Path) -> tuple[str, str]:
+    print(f"[trim] " + H(f"正在下载 ffmpeg（约 {FFMPEG_MB} MB，只需一次）...",
+                        f"Downloading ffmpeg (~{FFMPEG_MB} MB, one time)..."))
+    if os.name != "nt":
+        raise RuntimeError(H("非 Windows 系统请用包管理器安装：brew install ffmpeg / "
+                             "sudo apt install ffmpeg",
+                             "On non-Windows, install via your package manager: "
+                             "brew install ffmpeg / sudo apt install ffmpeg"))
+
+    plans: list[tuple[str, object]] = [("npmmirror", lambda: _install_from_mirror(target))]
+    for label, url in FALLBACK_ZIPS:
+        plans.append((label, lambda u=url: _install_from_zip(u, target)))
+
+    errors: list[str] = []
+    for label, fn in plans:
+        try:
+            fn()  # type: ignore[operator]
+            ffmpeg, ffprobe = _verify_installed(target)
+        except Exception as e:  # 网络失败、包结构变了、跑不起来，都换下一个源
+            errors.append(f"{label}: {e}")
+            print(f"[trim] " + H(f"{label} 不行，换下一个源…", f"{label} failed, trying next…"))
+            continue
+        print(f"[trim] " + H(f"安装完成（来源 {label}）：{target}",
+                            f"installed from {label} into {target}"))
+        return ffmpeg, ffprobe
+
+    detail = "\n".join("  " + e for e in errors)
+    raise RuntimeError(H(f"所有下载源都失败了：\n{detail}\n{_manual_hint(list(NEED_BINS))}",
+                         f"every download source failed:\n{detail}\n"
+                         f"{_manual_hint(list(NEED_BINS))}"))
+
+
+def ensure_media_tools(args) -> tuple[str, str]:
+    """返回 (ffmpeg, ffprobe) 的路径；缺了就（问一句后）自动装。"""
+    dirs = tool_bin_dirs(getattr(args, "ffmpeg_dir", None))
+    ffmpeg = find_tool("ffmpeg", dirs)
+    ffprobe = find_tool("ffprobe", dirs)
+    if ffmpeg and ffprobe:
+        return ffmpeg, ffprobe
+
+    missing = [n for n, p in zip(NEED_BINS, (ffmpeg, ffprobe)) if not p]
+    if getattr(args, "no_download", False):
+        raise RuntimeError(_manual_hint(missing))
+
+    if not getattr(args, "install_ffmpeg", False):
+        if not _interactive():
+            raise RuntimeError(_manual_hint(missing))
+        print(f"[trim] " + H(f"没有找到 {' / '.join(missing)}。",
+                            f"{' / '.join(missing)} not found."))
+        print(f"[trim] " + H(
+            f"可以现在自动下载到工具目录（约 {FFMPEG_MB} MB，只下这一次），"
+            f"也可以自己装（回车=下载）：",
+            f"Download it now into the tool folder (~{FFMPEG_MB} MB, once), "
+            f"or install it yourself (Enter = download):"))
+        ans = input("[trim] " + H("自动下载？(Y/n) ", "Download now? (Y/n) ")).strip().lower()
+        if ans in ("n", "no"):
+            raise RuntimeError(_manual_hint(missing))
+
+    target = _writable_install_dir(getattr(args, "ffmpeg_dir", None))
+    return install_ffmpeg(target)
 
 
 def resolve_encoder(encoder: str, ffmpeg: str) -> str:
@@ -744,7 +986,7 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=H("批量去掉视频结尾黑场 / 淡出转场（多线程）",
                       "Batch-trim black / white / fade-out tails from videos (multi-threaded)"))
-    p.add_argument("-i", "--input", required=True,
+    p.add_argument("-i", "--input",
                    help=H("输入视频文件或目录", "Input video file or folder"))
     p.add_argument("-o", "--output",
                    help=H("输出目录（默认：<输入目录>_no_black）",
@@ -883,6 +1125,16 @@ def main() -> None:
                           "Read the previous report and rerun only failed / interrupted files"))
     p.add_argument("--report",
                    help=H("把处理结果写成 CSV", "Write the results to a CSV"))
+    p.add_argument("--ffmpeg-dir", metavar="DIR", default=None,
+                   help=H("指定 ffmpeg.exe / ffprobe.exe 所在目录（默认先找本工具的 bin\\，再找 PATH）",
+                          "Folder containing ffmpeg.exe / ffprobe.exe "
+                          "(default: this tool's bin\\, then PATH)"))
+    p.add_argument("--no-download", action="store_true",
+                   help=H("缺少 ffmpeg 时不联网下载，直接报错退出（脚本/CI 用）",
+                          "Never download ffmpeg automatically; fail instead (for scripts/CI)"))
+    p.add_argument("--install-ffmpeg", action="store_true",
+                   help=H("只下载安装 ffmpeg 到工具目录 bin\\ 然后退出，不处理视频",
+                          "Only download ffmpeg into bin\\ and exit; process nothing"))
     args = p.parse_args()
     # 命令行显式给了就以它为准；没给则沿用 TRIM_LANG 环境变量（bat 走这条）
     if args.lang:
@@ -896,10 +1148,19 @@ def main() -> None:
     print_banner()
 
     try:
-        ffmpeg, ffprobe = which("ffmpeg"), which("ffprobe")
+        ffmpeg, ffprobe = ensure_media_tools(args)
     except RuntimeError as e:
         print(f"[trim] {e}", file=sys.stderr)
         sys.exit(1)
+
+    if args.install_ffmpeg:
+        return
+    if not args.input:
+        print("[trim] " + H("缺少 -i 输入路径（或加 --install-ffmpeg 只装 ffmpeg）",
+                            "missing -i input (or use --install-ffmpeg to just install ffmpeg)"),
+              file=sys.stderr)
+        sys.exit(2)
+
     args.video_encoder = resolve_encoder(args.encoder, ffmpeg)
 
     src = Path(args.input).expanduser().resolve()

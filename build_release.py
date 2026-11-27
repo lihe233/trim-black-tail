@@ -14,6 +14,7 @@ import argparse
 import os
 import re
 import sys
+import urllib.request
 import zipfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -30,20 +31,32 @@ DOC_FILES = [
     "README.en.md",
 ]
 
-README_TXT = """\
-去视频片尾黑场 / 闪白 批量裁剪工具 v{version}
+# 便携版 Python（embeddable）：解压即用、不用安装、不用管理员权限，11MB。
+# ffmpeg 太胖（两个 exe 四百多 MB）没法打进来，改成首次运行按需下载，见脚本注释。
+PY_EMBED_VERSION = "3.13.10"
+PY_EMBED_NAME = "python-%s-embed-amd64.zip" % PY_EMBED_VERSION
+PY_EMBED_URL = ("https://registry.npmmirror.com/-/binary/python/%s/%s"
+                % (PY_EMBED_VERSION, PY_EMBED_NAME))
+PY_EMBED_MB = 11
+
+README_TXT = r"""去视频片尾黑场 / 闪白 批量裁剪工具 v{version}
 作者：{author}    B站：{bili}
 仓库：{repo}
 
 【怎么用】
-1. 先确认电脑装了 Python 3.9+（命令行执行 python --version 能看到版本号）。
-   没装就去 https://www.python.org/downloads/ 下，安装时勾选 Add Python to PATH。
+1. 把整个压缩包解压到任意位置（别只把 bat 拖出来：
+   旁边的 runtime\python 文件夹就是自带的 Python 运行环境）。
 2. 双击  01_开始裁剪_双击这里.bat
-   （只需要双击这一个，别的 bat 不用管）
+   （只需要双击这一个，别的 bat 不用管。不用装 Python，包里已经带了）
 3. 按提示把视频文件夹拖进窗口，回车。
    第一次会问你语言（中文 / 英文）、编码方式，直接回车用默认的就行。
 4. 处理结果在源文件夹旁边的 xxx_no_black 子文件夹里，
    记录表是源文件夹里的 tail_report.csv。
+
+【第一次会下载 ffmpeg】
+ffmpeg 没有打进压缩包（两个 exe 加起来四百多 MB，塞不进来）。
+第一次运行时脚本会问一句「自动下载？」，直接回车就会下到本目录的 bin 文件夹里，
+大约 120MB，只下一次。电脑里已经装了 ffmpeg 的话会直接用，不会再下载。
 
 【其它三个 bat（都在 tools 文件夹里，按需使用）】
   只扫描清单.bat        只看哪些视频会被裁、裁多少，不动文件
@@ -51,7 +64,7 @@ README_TXT = """\
   只重跑失败.bat        上次失败的再来一遍
 
 【注意】
-- 需要 ffmpeg。脚本会自动在 PATH 和常见目录里找，找不到会提示你放哪。
+- ffmpeg 下载到本目录的 bin\ 里，之后一直用它；也能自己装好放进 PATH（自带的优先）。
 - 想用显卡加速就装好 NVIDIA 驱动，脚本会自动检测 NVENC。
 - 三个附加 bat 必须留在 tools 文件夹里，不能单独拖出去。
 
@@ -91,10 +104,64 @@ def check_bat(path):
     return len(raw)
 
 
+def fetch_embed_python(cache_dir):
+    """下载或复用便携 Python 压缩包，返回本地路径。"""
+    os.makedirs(cache_dir, exist_ok=True)
+    dst = os.path.join(cache_dir, PY_EMBED_NAME)
+    if os.path.isfile(dst) and os.path.getsize(dst) > 8 * 1024 * 1024:
+        print("  = 复用缓存：%s" % PY_EMBED_NAME)
+        return dst
+
+    print("  下载便携 Python %s（约 %d MB）..." % (PY_EMBED_VERSION, PY_EMBED_MB))
+    part = dst + ".part"
+    req = urllib.request.Request(PY_EMBED_URL, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(part, "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        got = 0
+        shown = -1
+        while True:
+            chunk = r.read(1 << 18)
+            if not chunk:
+                break
+            f.write(chunk)
+            got += len(chunk)
+            if total:
+                pct = got * 100 // total
+                if pct != shown:
+                    shown = pct
+                    print("\r    %3d%%  %5.1f / %.1f MB"
+                          % (pct, got / 1048576, total / 1048576), end="", flush=True)
+    print("\r" + " " * 34 + "\r", end="", flush=True)
+    os.replace(part, dst)
+    return dst
+
+
+def add_python_runtime(z, top, py_zip):
+    """把便携 Python 的所有文件塞进 zip 的 runtime/python/ 下。"""
+    base = top + "/runtime/python/"
+    count = 0
+    size = 0
+    with zipfile.ZipFile(py_zip) as src:
+        for info in src.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename.replace("\\", "/")
+            with src.open(info) as fh:
+                data = fh.read()
+            z.writestr(base + name, data, zipfile.ZIP_DEFLATED)
+            count += 1
+            size += len(data)
+    print("  + %-28s %7d B  (%d 个文件, %s)" % (
+        "runtime/python/", size, count, PY_EMBED_VERSION))
+    return count, size
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(ROOT, "dist"))
     ap.add_argument("--no-txt", action="store_true")
+    ap.add_argument("--no-python", action="store_true",
+                    help="不打包便携 Python（包会退回 40KB，但用户得自己装 Python）")
     args = ap.parse_args()
 
     ver = read_version()
@@ -118,13 +185,19 @@ def main():
         ).replace("\n", "\r\n")
         entries.append("使用说明.txt")
 
+    py_zip = None
+    if not args.no_python:
+        py_zip = fetch_embed_python(os.path.join(args.out, ".cache"))
+
     total = 0
+    n_files = 0
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for rel in entries:
             arc = top + "/" + rel
             if rel == "使用说明.txt":
                 z.writestr(arc, txt.encode("gbk"))
                 total += len(txt.encode("gbk"))
+                n_files += 1
                 print("  + %-28s %7d B  (GBK)" % (rel, len(txt.encode("gbk"))))
                 continue
             src = os.path.join(ROOT, rel.replace("/", os.sep))
@@ -137,22 +210,34 @@ def main():
                 size = os.path.getsize(src)
                 print("  + %-28s %7d B" % (rel, size))
             total += size
+            n_files += 1
+        if py_zip:
+            n, sz = add_python_runtime(z, top, py_zip)
+            n_files += n
+            total += sz
 
     size = os.path.getsize(zip_path)
     print("\n构建完成：%s" % zip_path)
     print("  顶层目录：%s/" % top)
-    print("  文件 %d 个，原始 %d B，压缩后 %d B (%.1f KB)"
-          % (len(entries), total, size, size / 1024.0))
+    print("  文件 %d 个，原始 %.1f MB，压缩后 %.2f MB"
+          % (n_files, total / 1048576.0, size / 1048576.0))
+    if size > 30 * 1024 * 1024:
+        sys.exit("产物超过 30MB —— 八成是把 bin\\ 里的 ffmpeg 打进去了，删掉重来")
 
     # 复核：解压后 bat 仍是 CRLF，中文名没有乱码
     with zipfile.ZipFile(zip_path) as z:
         bad = [i.filename for i in z.infolist()
                if i.filename.endswith(".bat")
                and z.read(i.filename).count(b"\r\n") != z.read(i.filename).count(b"\n")]
+        has_py = any(i.filename.endswith("/runtime/python/python.exe") for i in z.infolist())
     if bad:
         sys.exit("打包后 CRLF 校验失败：%s" % bad)
     print("  校验：%d 个 bat 均为 CRLF，中文路径正常" %
           len([e for e in entries if e.endswith(".bat")]))
+    if py_zip:
+        print("  校验：runtime/python/python.exe %s" % ("在包里" if has_py else "缺失！"))
+        if not has_py:
+            sys.exit("便携 Python 没打进去")
 
 
 if __name__ == "__main__":
