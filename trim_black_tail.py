@@ -68,7 +68,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # ===== 项目信息（署名、仓库、主页，按需修改这几行即可）=====
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __author__ = "lihe233"
 __repo__ = "https://github.com/lihe233/trim-black-tail"
 __home__ = "https://github.com/lihe233"
@@ -104,6 +104,8 @@ def _prescan_lang(argv: list[str]) -> str:
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".flv", ".ts"}
 BLACKFRAME_RE = re.compile(r"blackframe.*?\bt:([0-9]+\.?[0-9]*)")
 YAVG_RE = re.compile(r"lavfi\.signalstats\.YAVG=([0-9]+\.?[0-9]*)")
+FRAME_TIME_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
+STAT_RE = re.compile(r"lavfi\.signalstats\.(YAVG|YMAX|YMIN)=([0-9]+(?:\.[0-9]+)?)")
 PRINT_LOCK = threading.Lock()
 STOP = threading.Event()
 PROCS: set[subprocess.Popen] = set()
@@ -590,6 +592,71 @@ def sample_luma(path: Path, at: float, ffmpeg: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+def scan_frame_stats(path: Path, start: float, end: float,
+                     ffmpeg: str) -> list[tuple[float, float, float, float]]:
+    """逐帧返回 [(时间, YAVG, YMAX, YMIN), ...]，时间为绝对秒。
+
+    YMAX 是整帧最亮像素：真纯黑整帧只有 16，而「黑底弹窗 / 片尾字卡」
+    虽然九成像素也是黑的（YAVG 只有 20~35），文字和描边会把 YMAX 顶到 100 以上，
+    所以 YMAX 是区分「纯黑」和「黑底有画面」最直接的指标。
+    """
+    span = max(0.0, end - start)
+    if span <= 0 or STOP.is_set():
+        return []
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-copyts",
+           "-ss", f"{start:.3f}", "-t", f"{span:.3f}", "-i", str(path),
+           "-vf", "signalstats,metadata=print:file=-", "-an", "-f", "null", "-"]
+    r = run_proc(cmd, capture=True)
+    if STOP.is_set() or r.returncode != 0:
+        return []
+    out: list[tuple[float, float, float, float]] = []
+    cur: dict[str, float] = {}
+    for line in (r.stdout or "").splitlines():
+        m = FRAME_TIME_RE.search(line)
+        if m:
+            cur = {"t": float(m.group(1))}
+            continue
+        m = STAT_RE.search(line)
+        if not m:
+            continue
+        cur[m.group(1)] = float(m.group(2))
+        if m.group(1) == "YMAX" and "YAVG" in cur:
+            out.append((cur["t"], cur["YAVG"], cur["YMAX"], cur.get("YMIN", 0.0)))
+            cur = {}
+    return out
+
+
+def pure_field_start(frames, duration: float, args,
+                     polarity: str = "black") -> float | None:
+    """在逐帧统计里找「延续到片尾的纯净色场」起点；没有则返回 None。
+
+    纯黑：整帧 YMAX 都很低（默认 <= 24）。纯白：整帧 YMIN 都很高。
+    黑底弹窗 / 白底字卡因为有文字、描边、UI 边框，不满足这个条件。
+    """
+    if not frames or args.pure_ymax <= 0:
+        return None
+    cap = args.pure_ymax
+    if polarity == "white":
+        times = [f[0] for f in frames if f[3] >= 255.0 - cap]
+    else:
+        times = [f[0] for f in frames if f[2] <= cap]
+    if not times:
+        return None
+    return trailing_black_start(times, duration, args,
+                                gap_tol=args.gap_tol, min_black=0.0)
+
+
+def dark_card_note(polarity: str = "black") -> str:
+    """结尾是暗底（亮底）但有内容的画面时的说明文案。"""
+    fname = "白" if polarity == "white" else "黑"
+    return H(
+        f"结尾画面是{'亮' if polarity == 'white' else '暗'}底但有内容"
+        f"（整帧{'最暗' if polarity == 'white' else '最亮'}像素超出纯{fname}范围），"
+        f"按片尾卡保留，不裁",
+        f"the ending is a {'bright' if polarity == 'white' else 'dark'} card with "
+        f"visible content, not pure {'white' if polarity == 'white' else 'black'} - kept")
+
+
 def luma_curve(path: Path, start: float, end: float, ffmpeg: str,
                samples: int = 8, fps_hz: float = 0.0) -> list[float]:
     """在 [start, end] 采样平均亮度序列。
@@ -820,9 +887,21 @@ def detect_tail_uniform(path: Path, duration: float, args, ffmpeg: str,
 
     times = scan_black_times(path, duration, args, ffmpeg, polarity=polarity)
     start = trailing_black_start(times, duration, args)
+
     if start is not None and window > 0:
         detected = duration - start
         if detected >= window * args.anomaly_ratio:
+            # 结尾是暗底弹窗/字幕卡时，全片重扫只会把起点推得更早，不会变出纯黑；
+            # 先确认尾巴上到底有没有纯黑，没有就直接按片尾卡保留，省掉一次全片扫描。
+            if args.dark_card == "keep" and args.pure_ymax > 0:
+                fr = scan_frame_stats(path, start, duration, ffmpeg)
+                if fr and pure_field_start(fr, duration, args, polarity) is None:
+                    why = dark_card_note(polarity)
+                    out["notes"].append(why)
+                    out["card_keep"] = True
+                    out["reject"] = why
+                    out["start"] = start
+                    return out
             # 异常：几乎占满窗口，起点可能在窗口之外 -> 全片重扫
             out["anomaly"] = True
             note = H(f"{label} {detected:.2f}s 接近窗口 {window:.2f}s，已自动全片重扫",
@@ -865,6 +944,37 @@ def detect_tail_uniform(path: Path, duration: float, args, ffmpeg: str,
                     f"严格{label}起点 {refined:.3f}s，窗口内连续 {core_len:.2f}s",
                     f"strict start {refined:.3f}s, {core_len:.2f}s continuous in the window"))
                 start = refined
+
+    # 内容守卫：宽阈值与严格阈值都只看「暗像素占比」，而黑底弹窗、系统提示框、
+    # GAME OVER 字卡这类片尾画面本来就有九成像素是黑的，两轮扫描都会放行。
+    # 这里再看 YMAX（整帧最亮像素）：真黑场只有 16 左右，有文字/描边就会上到 100+。
+    # 必须放在严格复核之后：严格复查会向前回溯 core_preroll 秒，把弹窗那一段
+    # 也算成黑帧，只有在这里才能把裁切点拉回真正的纯黑起点。
+    if args.dark_card == "keep" and args.pure_ymax > 0:
+        frames = scan_frame_stats(path, start, duration, ffmpeg)
+        pstart = pure_field_start(frames, duration, args, polarity)
+        fname = "白" if polarity == "white" else "黑"
+        if pstart is None:
+            why = dark_card_note(polarity)
+            out["notes"].append(why)
+            out["card_keep"] = True
+            out["reject"] = why
+            out["start"] = start
+            return out
+        hold = pstart - start
+        if hold > args.pure_gap_tol:
+            out["notes"].append(H(
+                f"起点 {start:.3f}s 到纯{fname}起点 {pstart:.3f}s 之间有 {hold:.2f}s 画面内容"
+                f"（弹窗/字卡），裁切点后移到 {pstart:.3f}s",
+                f"{hold:.2f}s of visible content between {start:.3f}s and the pure-{fname} "
+                f"start {pstart:.3f}s (popup/caption card), cut moved to {pstart:.3f}s"))
+            start = pstart
+        elif pstart > start:
+            out["notes"].append(H(
+                f"纯{fname}起点 {pstart:.3f}s，与候选起点 {start:.3f}s 相差 "
+                f"{hold:.2f}s（渐变尾巴），保留较早的起点",
+                f"pure-{fname} start {pstart:.3f}s vs candidate {start:.3f}s "
+                f"({hold:.2f}s apart, fade tail) - keeping the earlier start"))
 
     if args.dark_luma > 0:
         real, why = is_real_black(path, start, duration, args, ffmpeg,
@@ -1063,6 +1173,20 @@ def main() -> None:
     p.add_argument("--curve-postroll", type=float, default=2.0,
                    help=H("淡出校验：黑场起点后取多少秒覆盖收敛段（默认 2；长黑场不必采到片尾）",
                           "Fade check: seconds after the start to cover the settling part (default 2)"))
+    p.add_argument("--dark-card", choices=["keep", "cut"], default="keep",
+                   help=H("片尾黑底画面（系统弹窗/字卡/黑底字幕）怎么处理："
+                          "keep=只裁真纯黑，有内容的画面保留（默认）；cut=当成黑场一起裁掉",
+                          "How to treat a dark ending that still shows content "
+                          "(system popup / caption card): keep = cut only pure black (default); "
+                          "cut = treat it as black"))
+    p.add_argument("--pure-ymax", type=float, default=24.0,
+                   help=H("纯黑判定：整帧最亮像素 YMAX 不超过该值才算纯黑（默认 24；0=关闭该守卫）",
+                          "Pure-black check: the brightest pixel YMAX must stay at or below this "
+                          "value (default 24; 0 = off)"))
+    p.add_argument("--pure-gap-tol", type=float, default=2.5,
+                   help=H("候选起点到纯黑起点相差超过该秒数，说明中间是弹窗/字卡，裁切点后移（默认 2.5）",
+                          "If the candidate start and the pure-black start differ by more than this, "
+                          "the gap is treated as a popup and the cut moves forward (default 2.5)"))
     p.add_argument("--core-threshold", type=int, default=64,
                    help=H("严格黑帧阈值 0-255，越小越严（默认 64；排除偏暗剧情画面）",
                           "Strict black threshold 0-255, lower = stricter (default 64; rejects merely dark scenes)"))
@@ -1279,6 +1403,7 @@ def main() -> None:
                         "both": ["black", "white"]}[args.flash]
                 cands: list[tuple[float, str]] = []   # (起点, 极性)
                 rejects: list[tuple[float, str, str]] = []  # (起点, 原因, 极性)
+                card_keep: str | None = None   # 结尾是暗底有内容的画面，按片尾卡保留
                 for pol in pols:
                     res = detect_tail_uniform(f, duration, args, ffmpeg, window, pol)
                     for nt in res["notes"]:
@@ -1289,6 +1414,8 @@ def main() -> None:
                         r["异常重扫"] = "是"
                         log(f"[{idx}/{len(files)}] {r['文件']}: " + H("异常，已自动全片重扫", "anomaly - rescanned the whole file"))
                     if res["reject"]:
+                        if res.get("card_keep") and not card_keep:
+                            card_keep = res["reject"]
                         rejects.append((res["start"], res["reject"], pol))
                     elif res["start"] is not None:
                         cands.append((res["start"], pol))
@@ -1304,6 +1431,14 @@ def main() -> None:
                     # 检出了但被曲线校验否决：结尾本身偏暗/偏亮，不是转场
                     st, why, pol = sorted(rejects, key=lambda x: x[0])[0]
                     white = pol == "white"
+                    if card_keep:
+                        # 结尾是暗底弹窗/字卡（有内容），不是纯黑：整段保留
+                        r["状态"] = "跳过：结尾是暗底画面（有内容，非纯黑）"
+                        r["黑场起点(s)"] = f"{st:.3f}"
+                        r["标记复核"] = "暗底待确认"
+                        r["类型"] = "白场" if white else "黑场"
+                        log(f"[{idx}/{len(files)}] {r['文件']}: {card_keep}")
+                        return r
                     r["状态"] = ("跳过：疑似结尾偏亮（非白场）" if white
                                  else "跳过：疑似结尾偏暗（非黑场）")
                     r["黑场起点(s)"] = f"{st:.3f}"

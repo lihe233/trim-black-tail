@@ -122,6 +122,17 @@ The wide threshold also flags merely dark scenes, so the area around the candida
 - the minimum continuous run drops to `--core-min-black` (default 0.15 s), which catches a hard cut to black
 - if the stretch between the candidate and the first strict black frame is a continuous fade, the earlier start is kept so the fade is not left half-cut
 
+### 3.5 Pure-black guard (`--dark-card keep`, on by default)
+
+A dark popup, a system notice box or a GAME OVER title card is **90 % black pixels**, so `blackframe` (which only looks at the share of dark pixels) waves it through and the whole card gets trimmed as if it were pure black.
+
+This step uses a different signal: `signalstats` **YMAX**, the brightest pixel in the frame. A truly black frame sits at 16; as soon as there is text, an outline or a UI border, YMAX jumps past 100 while the average luma stays around 20-35 — which is why YAVG cannot tell them apart.
+
+- no pure black at the tail → the ending is a dark card with content, nothing is cut (report says “skipped: dark card at the end”)
+- more than `--pure-gap-tol` (default 2.5 s) of content before the pure-black run → the cut moves to the pure-black start
+- the pure-black run starts within 2.5 s of the candidate → it is the tail of a fade, so the earlier start is kept
+- `--dark-card cut` restores the old behaviour and removes the card too
+
 ### 4. Luma curve check
 
 A luma curve is sampled around the start (1 s before, 2 s after, bisected so samples get denser toward the tail) to tell a fade-out from genuinely dark footage. It also records the tail luma, the total drop and the number of steps into the report.
@@ -165,6 +176,9 @@ The prefilter is symmetric too: black mode asks whether the last frame is bright
 | `--prefilter-luma` | 45 | Skip the scan when the last frame is brighter than this, 0 = off |
 | `--head` | off | Also detect and trim leading black |
 | `--head-threshold` | 32 | Leading strict threshold (stricter than the tail) |
+| `--dark-card` | `keep` | Dark ending that still shows content (system popup / caption card): `keep` cuts only pure black; `cut` trims it as well |
+| `--pure-ymax` | 24 | Pure black needs the brightest pixel ≤ this value, 0 = off |
+| `--pure-gap-tol` | 2.5 | If the candidate start and the pure-black start differ by more than this, the gap is a popup and the cut moves forward |
 | `--dark-luma` | 30 | Luma threshold for the curve check, 0 = off |
 | `--encoder` | `auto` | `auto` / `libx264` / `h264_nvenc` / `hevc_nvenc` |
 | `--crf` | 18 | x264 quality, lower = better |
@@ -216,6 +230,7 @@ file / duration(s) / mode / type / head_removed(s) / field_start(s) / cut_at(s) 
 
 - The GPU only accelerates the final encode; scanning and luma checks stay on the CPU because ffmpeg's `blackframe` / `signalstats` filters are CPU-only
 - With `--recursive` the relative subfolder structure is preserved, so identically named files never overwrite each other
+- A dark ending that still shows something (system popup, caption card, GAME OVER title) is mostly black pixels but has text and outlines, so it is not treated as pure black by default (`--dark-card keep`). Use `--dark-card cut` to remove it too
 
 ## Follow the author
 
