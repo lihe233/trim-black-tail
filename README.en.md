@@ -4,6 +4,8 @@ Detects black tails, white flashes and fade-outs at the end of a video, cuts fro
 
 Built for batch editing: a whole season of footage each ends with seconds to minutes of black, a fade to black or a white flash — trimming them one by one is unbearable, while this tool does a whole folder in one go.
 
+> **Download** (unzip and run, Python bundled): [latest trim-black-tail release](https://github.com/lihe233/trim-black-tail/releases/latest) ｜ then double-click `01_开始裁剪_双击这里.bat`
+
 > **Author**: GitHub [@lihe233](https://github.com/lihe233) ｜ My **Bilibili profile**: [space.bilibili.com/267072796](https://space.bilibili.com/267072796) ｜ [Repository](https://github.com/lihe233/trim-black-tail)
 
 [中文](README.md) ｜ **English**

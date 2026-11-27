@@ -4,6 +4,8 @@
 
 面向批量剪辑场景：一整集素材的尾巴都挂着几秒到几分钟的黑屏、渐黑或闪白转场，手动一个个剪太慢，而这个工具可以一次处理完整个文件夹。
 
+> **下载**（解压即用，自带 Python，不用装环境）：[trim-black-tail 最新版](https://github.com/lihe233/trim-black-tail/releases/latest) ｜ 解压后双击 `01_开始裁剪_双击这里.bat`
+
 > **作者**：GitHub [@lihe233](https://github.com/lihe233) ｜ 我的 **B站主页**：[space.bilibili.com/267072796](https://space.bilibili.com/267072796) ｜ [项目仓库](https://github.com/lihe233/trim-black-tail)
 
 **中文** ｜ [English](README.en.md)
