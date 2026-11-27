@@ -23,3 +23,6 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
+
+# 构建产物
+dist/
