@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 本地工具与配置（不公开）
+.workbuddy/
+trim_config.ini
+STOP.txt
+
+# 输出与报告
+*_no_black/
+tail_report.csv
+export_report.csv
+scan_trim_report.csv
+*.log
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
