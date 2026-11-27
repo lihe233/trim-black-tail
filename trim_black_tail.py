@@ -68,7 +68,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # ===== 项目信息（署名、仓库、主页，按需修改这几行即可）=====
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 __author__ = "lihe233"
 __repo__ = "https://github.com/lihe233/trim-black-tail"
 __home__ = "https://github.com/lihe233"
@@ -630,31 +630,42 @@ def pure_field_start(frames, duration: float, args,
                      polarity: str = "black") -> float | None:
     """在逐帧统计里找「延续到片尾的纯净色场」起点；没有则返回 None。
 
-    纯黑：整帧 YMAX 都很低（默认 <= 24）。纯白：整帧 YMIN 都很高。
-    黑底弹窗 / 白底字卡因为有文字、描边、UI 边框，不满足这个条件。
+    纯黑要同时满足两条：整帧最亮像素 YMAX <= pure_ymax（默认 80）、
+    平均亮度 YAVG <= pure_yavg（默认 28）。纯白按 255 对称。
+
+    YMAX 单独用会被编解码噪点骗：一段淡出到黑的尾巴，末帧 YAVG 只有 18，
+    但量化噪点能把个别像素顶到 28~38，卡在「纯黑 24」之外，
+    于是整段被当成「有内容的暗底」而漏裁。放宽到 80 正好盖住噪点，
+    而真黑底字卡/弹窗的文字描边会把 YMAX 顶到 120 以上，仍然分得开。
+    YAVG 是第二道保险：整体偏灰的平坦画面 YMAX 也可能只到 60~80，
+    但它 YAVG 高，不该算纯黑。
     """
     if not frames or args.pure_ymax <= 0:
         return None
     cap = args.pure_ymax
+    avg_cap = args.pure_yavg if args.pure_yavg > 0 else 255.0
     if polarity == "white":
-        times = [f[0] for f in frames if f[3] >= 255.0 - cap]
+        times = [f[0] for f in frames
+                 if f[3] >= 255.0 - cap and f[1] >= 255.0 - avg_cap]
     else:
-        times = [f[0] for f in frames if f[2] <= cap]
+        times = [f[0] for f in frames
+                 if f[2] <= cap and f[1] <= avg_cap]
     if not times:
         return None
     return trailing_black_start(times, duration, args,
                                 gap_tol=args.gap_tol, min_black=0.0)
 
 
-def dark_card_note(polarity: str = "black") -> str:
+def dark_card_note(polarity: str = "black", cap: float = 0) -> str:
     """结尾是暗底（亮底）但有内容的画面时的说明文案。"""
-    fname = "白" if polarity == "white" else "黑"
+    lim = (f"（整帧{'最暗' if polarity == 'white' else '最亮'}像素超过 {cap:g}）"
+           if cap else "")
+    lim_en = f" (brightest pixel above {cap:g})" if cap else ""
     return H(
-        f"结尾画面是{'亮' if polarity == 'white' else '暗'}底但有内容"
-        f"（整帧{'最暗' if polarity == 'white' else '最亮'}像素超出纯{fname}范围），"
-        f"按片尾卡保留，不裁",
+        f"结尾画面是{'亮' if polarity == 'white' else '暗'}底但有内容{lim}，"
+        f"判定为片尾字卡/弹窗，保留不裁",
         f"the ending is a {'bright' if polarity == 'white' else 'dark'} card with "
-        f"visible content, not pure {'white' if polarity == 'white' else 'black'} - kept")
+        f"visible content{lim_en} - treated as a caption card and kept")
 
 
 def luma_curve(path: Path, start: float, end: float, ffmpeg: str,
@@ -896,7 +907,7 @@ def detect_tail_uniform(path: Path, duration: float, args, ffmpeg: str,
             if args.dark_card == "keep" and args.pure_ymax > 0:
                 fr = scan_frame_stats(path, start, duration, ffmpeg)
                 if fr and pure_field_start(fr, duration, args, polarity) is None:
-                    why = dark_card_note(polarity)
+                    why = dark_card_note(polarity, args.pure_ymax)
                     out["notes"].append(why)
                     out["card_keep"] = True
                     out["reject"] = why
@@ -955,7 +966,7 @@ def detect_tail_uniform(path: Path, duration: float, args, ffmpeg: str,
         pstart = pure_field_start(frames, duration, args, polarity)
         fname = "白" if polarity == "white" else "黑"
         if pstart is None:
-            why = dark_card_note(polarity)
+            why = dark_card_note(polarity, args.pure_ymax)
             out["notes"].append(why)
             out["card_keep"] = True
             out["reject"] = why
@@ -1179,10 +1190,15 @@ def main() -> None:
                           "How to treat a dark ending that still shows content "
                           "(system popup / caption card): keep = cut only pure black (default); "
                           "cut = treat it as black"))
-    p.add_argument("--pure-ymax", type=float, default=24.0,
-                   help=H("纯黑判定：整帧最亮像素 YMAX 不超过该值才算纯黑（默认 24；0=关闭该守卫）",
+    p.add_argument("--pure-yavg", type=float, default=28.0,
+                   help=H("纯黑判定的第二条件：整帧平均亮度 YAVG 也要不超过该值（默认 28；0=不查）",
+                          "Second condition for pure black: average luma YAVG must also stay at or "
+                          "below this (default 28; 0 = off)"))
+    p.add_argument("--pure-ymax", type=float, default=80.0,
+                   help=H("纯黑判定：整帧最亮像素 YMAX 不超过该值才算纯黑（默认 80，"
+                          "容得下编码噪点；0=关闭该守卫）",
                           "Pure-black check: the brightest pixel YMAX must stay at or below this "
-                          "value (default 24; 0 = off)"))
+                          "value (default 80, tolerates codec noise; 0 = off)"))
     p.add_argument("--pure-gap-tol", type=float, default=2.5,
                    help=H("候选起点到纯黑起点相差超过该秒数，说明中间是弹窗/字卡，裁切点后移（默认 2.5）",
                           "If the candidate start and the pure-black start differ by more than this, "

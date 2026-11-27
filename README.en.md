@@ -126,7 +126,9 @@ The wide threshold also flags merely dark scenes, so the area around the candida
 
 A dark popup, a system notice box or a GAME OVER title card is **90 % black pixels**, so `blackframe` (which only looks at the share of dark pixels) waves it through and the whole card gets trimmed as if it were pure black.
 
-This step uses a different signal: `signalstats` **YMAX**, the brightest pixel in the frame. A truly black frame sits at 16; as soon as there is text, an outline or a UI border, YMAX jumps past 100 while the average luma stays around 20-35 — which is why YAVG cannot tell them apart.
+This step uses a different signal: `signalstats` **YMAX**, the brightest pixel in the frame. A truly black frame sits at 16; as soon as there is text, an outline or a UI border, YMAX jumps past 120 while the average luma stays around 20-35 — which is why YAVG cannot tell them apart.
+
+The threshold must not be too tight. On a compressed fade-to-black the last frame has YAVG around 18, yet quantisation noise can push single pixels to 28-38, so a "pure black ≤ 24" rule throws the whole tail away as "a dark card with content". Measured over a 118-episode set: fake pure black ended at YMAX 26-38, real dark cards and popups at 121-238 — a wide gap, so the default is **80**. `--pure-yavg` (default 28) is a second gate, because a flat grey frame can also sit at YMAX 60-80 while its average luma is high.
 
 - no pure black at the tail → the ending is a dark card with content, nothing is cut (report says “skipped: dark card at the end”)
 - more than `--pure-gap-tol` (default 2.5 s) of content before the pure-black run → the cut moves to the pure-black start
@@ -177,7 +179,8 @@ The prefilter is symmetric too: black mode asks whether the last frame is bright
 | `--head` | off | Also detect and trim leading black |
 | `--head-threshold` | 32 | Leading strict threshold (stricter than the tail) |
 | `--dark-card` | `keep` | Dark ending that still shows content (system popup / caption card): `keep` cuts only pure black; `cut` trims it as well |
-| `--pure-ymax` | 24 | Pure black needs the brightest pixel ≤ this value, 0 = off |
+| `--pure-ymax` | 80 | Pure black needs the brightest pixel ≤ this value (leaves room for codec noise), 0 = off |
+| `--pure-yavg` | 28 | Second condition: average luma must also be ≤ this, so flat grey frames are not taken for pure black, 0 = off |
 | `--pure-gap-tol` | 2.5 | If the candidate start and the pure-black start differ by more than this, the gap is a popup and the cut moves forward |
 | `--dark-luma` | 30 | Luma threshold for the curve check, 0 = off |
 | `--encoder` | `auto` | `auto` / `libx264` / `h264_nvenc` / `hevc_nvenc` |
