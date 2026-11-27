@@ -6,7 +6,7 @@ title 只扫描清单
 
 echo ============================================================
 echo    只扫描清单（不出片，先看看会裁多少）
-echo    作者：lihe233      B站：space.bilibili.com/267072796
+echo    作者：lihe233   B站主页：space.bilibili.com/267072796
 echo    仓库：github.com/lihe233/trim-black-tail
 echo ============================================================
 echo.

@@ -6,7 +6,7 @@ title 视频片尾黑场-闪白 批量裁剪
 
 echo ============================================================
 echo    视频片尾黑场 / 闪白  批量裁剪工具
-echo    作者：lihe233      B站：space.bilibili.com/267072796
+echo    作者：lihe233   B站主页：space.bilibili.com/267072796
 echo    仓库：github.com/lihe233/trim-black-tail
 echo ============================================================
 echo.

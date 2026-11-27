@@ -40,7 +40,7 @@ PY_EMBED_URL = ("https://registry.npmmirror.com/-/binary/python/%s/%s"
 PY_EMBED_MB = 11
 
 README_TXT = r"""去视频片尾黑场 / 闪白 批量裁剪工具 v{version}
-作者：{author}    B站：{bili}
+作者：{author}    B站主页：{bili}
 仓库：{repo}
 
 【怎么用】

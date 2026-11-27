@@ -46,7 +46,7 @@ auto 模式的异常与标记机制：
   python trim_black_tail.py -i D:\\素材 -o D:\\成片 --tail 2
   python trim_black_tail.py -i D:\\素材 -o D:\\成片 --dry-run --report D:\\素材\\清单.csv
 
-依赖：ffmpeg / ffprobe。缺失时会自动下载到本工具 bin\ 下（约 60MB，一次），
+依赖：ffmpeg / ffprobe。缺失时会自动下载到本工具 bin\\ 下（约 60MB，一次），
       也会直接用 PATH 里已有的；Python 只用标准库。
 """
 
@@ -72,7 +72,7 @@ __version__ = "1.4.0"
 __author__ = "lihe233"
 __repo__ = "https://github.com/lihe233/trim-black-tail"
 __home__ = "https://github.com/lihe233"
-__bilibili__ = "https://space.bilibili.com/267072796"   # 主要更新在这里
+__bilibili__ = "https://space.bilibili.com/267072796"   # 作者主页，引流用
 
 # ===== 界面语言：zh=中文（默认），en=English =====
 # 只影响控制台输出、帮助文本、错误提示；报告 CSV 的列名与状态值始终是中文，
@@ -231,7 +231,7 @@ def print_banner() -> None:
     if __repo__:
         log(f"[trim]   " + H(f"仓库：{__repo__}", f"Repo:   {__repo__}"))
     if __bilibili__:
-        log(f"[trim]   " + H(f"B站 ：{__bilibili__}", f"Bili:   {__bilibili__}"))
+        log(f"[trim]   " + H(f"B站主页：{__bilibili__}", f"Bili:   {__bilibili__}"))
     log(f"[trim]   " + H("原片不会被修改，输出目录默认 <文件夹名>_no_black",
                         "Source files are never modified; output goes to <folder>_no_black"))
     log(f"[trim] {bar}")

@@ -4,7 +4,7 @@
 
 面向批量剪辑场景：一整集素材的尾巴都挂着几秒到几分钟的黑屏、渐黑或闪白转场，手动一个个剪太慢，而这个工具可以一次处理完整个文件夹。
 
-> **作者**：GitHub [@lihe233](https://github.com/lihe233) ｜ 主要更新和视频演示在 **B站**：[space.bilibili.com/267072796](https://space.bilibili.com/267072796) ｜ [项目仓库](https://github.com/lihe233/trim-black-tail)
+> **作者**：GitHub [@lihe233](https://github.com/lihe233) ｜ 我的 **B站主页**：[space.bilibili.com/267072796](https://space.bilibili.com/267072796) ｜ [项目仓库](https://github.com/lihe233/trim-black-tail)
 
 **中文** ｜ [English](README.en.md)
 
@@ -42,7 +42,7 @@
 
 双击 `01_开始裁剪_双击这里.bat`，把素材文件夹拖进窗口，回车确认，按提示填参数（全部直接回车即用默认值）。处理完可以继续拖下一个文件夹。
 
-窗口一打开就会显示工具名、作者、B站和仓库地址，再往下才是「拖入文件夹」的提示——先看清这是什么工具，再决定要不要跑。
+窗口一打开就会显示工具名、作者、B站主页和仓库地址，再往下才是「拖入文件夹」的提示——先看清这是什么工具，再决定要不要跑。
 
 首次填好的参数会存进 `trim_config.ini`，下次运行只问一句「直接沿用上次配置？」，回车即可。
 
@@ -223,11 +223,11 @@ python trim_black_tail.py -i D:\素材 --retry-failed report.csv
 
 ## 关注作者
 
-用法演示、更新通知、剪辑相关工具都发在 B站，有问题也可以在仓库提 issue。
+我的 B站 主页：工具更新先发在那儿，平时也发剪辑相关的东西，欢迎来逛。有问题在仓库提 issue 就行。
 
 | 去处 | 链接 |
 |---|---|
-| **B站主页（主要更新）** | <https://space.bilibili.com/267072796> |
+| **B站主页（作者）** | <https://space.bilibili.com/267072796> |
 | 手机上直接跳 App 主页 | `bilibili://space/267072796` |
 | GitHub 主页 | <https://github.com/lihe233> |
 | 项目仓库 | <https://github.com/lihe233/trim-black-tail> |

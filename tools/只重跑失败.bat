@@ -6,7 +6,7 @@ title 只重跑失败的文件
 
 echo ============================================================
 echo    断点续跑（只重跑上次失败/中断的）
-echo    作者：lihe233      B站：space.bilibili.com/267072796
+echo    作者：lihe233   B站主页：space.bilibili.com/267072796
 echo    仓库：github.com/lihe233/trim-black-tail
 echo ============================================================
 echo.

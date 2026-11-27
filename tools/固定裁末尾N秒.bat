@@ -6,7 +6,7 @@ title 固定裁末尾N秒
 
 echo ============================================================
 echo    固定裁掉末尾 N 秒（不做黑场检测）
-echo    作者：lihe233      B站：space.bilibili.com/267072796
+echo    作者：lihe233   B站主页：space.bilibili.com/267072796
 echo    仓库：github.com/lihe233/trim-black-tail
 echo ============================================================
 echo.

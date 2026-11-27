@@ -4,7 +4,7 @@ Detects black tails, white flashes and fade-outs at the end of a video, cuts fro
 
 Built for batch editing: a whole season of footage each ends with seconds to minutes of black, a fade to black or a white flash — trimming them one by one is unbearable, while this tool does a whole folder in one go.
 
-> **Author**: GitHub [@lihe233](https://github.com/lihe233) ｜ Videos and updates (in Chinese) on **Bilibili**: [space.bilibili.com/267072796](https://space.bilibili.com/267072796) ｜ [Repository](https://github.com/lihe233/trim-black-tail)
+> **Author**: GitHub [@lihe233](https://github.com/lihe233) ｜ My **Bilibili profile**: [space.bilibili.com/267072796](https://space.bilibili.com/267072796) ｜ [Repository](https://github.com/lihe233/trim-black-tail)
 
 [中文](README.md) ｜ **English**
 
@@ -219,11 +219,11 @@ file / duration(s) / mode / type / head_removed(s) / field_start(s) / cut_at(s) 
 
 ## Follow the author
 
-Demos, release notes and other editing tools go to Bilibili; issues are welcome on the repository.
+My Bilibili profile is where I post updates and other editing-related stuff first. Issues are welcome on the repository.
 
 | Where | Link |
 |---|---|
-| **Bilibili (main updates)** | <https://space.bilibili.com/267072796> |
+| **Bilibili profile (author)** | <https://space.bilibili.com/267072796> |
 | Open the profile in the app (mobile) | `bilibili://space/267072796` |
 | GitHub profile | <https://github.com/lihe233> |
 | Repository | <https://github.com/lihe233/trim-black-tail> |
