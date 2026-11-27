@@ -63,7 +63,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # ===== 项目信息（署名、仓库、主页，按需修改这几行即可）=====
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "lihe233"
 __repo__ = "https://github.com/lihe233/trim-black-tail"
 __home__ = "https://github.com/lihe233"
@@ -919,8 +919,19 @@ def main() -> None:
         out_root = out_dir
     else:
         files = [src]
-        out_dir = Path(args.output).expanduser().resolve() if args.output else src.parent / (src.stem + "_cut.mp4")
-        out_root = out_dir.parent
+        if args.output:
+            cand = Path(args.output).expanduser().resolve()
+            # 末尾带分隔符、已存在的目录、或没有扩展名，都按「输出目录」处理；
+            # 否则当成输出文件名。否则 `-o 某目录` 会变成一个没有扩展名的文件，
+            # ffmpeg 无法推断封装格式，直接报 Invalid argument。
+            if cand.is_dir() or cand.suffix == "" or args.output.rstrip().endswith(("/", "\\")):
+                out_dir = cand / (src.stem + ".mp4")
+                out_root = cand
+            else:
+                out_dir, out_root = cand, cand.parent
+        else:
+            out_dir = src.parent / (src.stem + "_cut.mp4")
+            out_root = out_dir.parent
 
     def rel_name(f: Path) -> str:
         """递归时带相对子路径，避免同名文件在报告和汇总里无法区分。"""
@@ -939,6 +950,7 @@ def main() -> None:
                      if any(k in rel_name(f).lower() for k in keys)]
 
     # 断点续跑：只挑上次报告里失败 / 中断的文件
+    prev_rows: list[dict] = []
     if args.retry_failed:
         rp = Path(args.retry_failed).expanduser().resolve()
         if not rp.exists():
@@ -946,6 +958,7 @@ def main() -> None:
             sys.exit(1)
         with rp.open(encoding="utf-8-sig", newline="") as fh:
             old_rows = list(csv.DictReader(fh))
+        prev_rows = old_rows
         bad = set()
         for old in old_rows:
             st = old.get("状态", "")
@@ -1050,14 +1063,20 @@ def main() -> None:
                     removed = duration - cut_at
                     if removed > window * args.flag_ratio:
                         r["标记复核"] = "是"
-                        note = (f"裁剪 {removed:.2f}s 超过窗口 {window:.2f}s 的一半 "
-                                f"{window * args.flag_ratio:.2f}s，需人工复核")
+                        note = H(
+                            f"裁剪 {removed:.2f}s 超过窗口 {window:.2f}s 的一半 "
+                            f"{window * args.flag_ratio:.2f}s，需人工复核",
+                            f"cut {removed:.2f}s exceeds half the {window:.2f}s window "
+                            f"({window * args.flag_ratio:.2f}s) - worth a manual look")
                         r["说明"] = (r["说明"] + "；" if r["说明"] else "") + note
 
             has_cut = (not no_black) or head_cut > 0
-            if has_cut and (cut_at - head_cut < args.min_keep
-                            or cut_at >= duration - 0.05
-                            or cut_at <= head_cut + 0.01):
+            # 后两条只对「裁片尾」有意义：只裁片头时 cut_at 就是片尾本身，
+            # 若也按这两条判，等于把「片头裁切」一律误判成裁切点不合理。
+            bad_cut = cut_at - head_cut < args.min_keep
+            if not no_black:
+                bad_cut = bad_cut or cut_at >= duration - 0.05 or cut_at <= head_cut + 0.01
+            if has_cut and bad_cut:
                 r["状态"] = (f"跳过：裁切点 {cut_at:.2f}s 不合理"
                              + (f"（片头已去 {head_cut:.2f}s）" if head_cut > 0 else ""))
                 r["裁切点(s)"] = f"{cut_at:.3f}"
@@ -1076,6 +1095,7 @@ def main() -> None:
                 raise RuntimeError("输出路径与输入文件相同，拒绝覆盖原片")
 
             removed = (duration - cut_at) + head_cut
+            kept = cut_at - head_cut   # 保留长度要扣掉片头，否则只裁片头时会显示成整段时长
             head_txt = (H(f"片头去 {head_cut:.2f}s，", f"head -{head_cut:.2f}s, ") if head_cut > 0 else "")
             r["裁切点(s)"] = f"{cut_at:.3f}"
             r["去掉(s)"] = f"{removed:.3f}" if has_cut else ""
@@ -1092,8 +1112,8 @@ def main() -> None:
                 else:
                     r["状态"] = "试运行"
                     log(f"[{idx}/{len(files)}] {r['文件']}: {duration:.2f}s -> {head_txt}"
-                        + H(f"保留 {cut_at:.2f}s (去掉 {removed:.2f}s) [试运行]",
-                            f"kept {cut_at:.2f}s (removed {removed:.2f}s) [dry run]"))
+                        + H(f"保留 {kept:.2f}s (去掉 {removed:.2f}s) [试运行]",
+                            f"kept {kept:.2f}s (removed {removed:.2f}s) [dry run]"))
                 return r
 
             if dst.exists() and not args.overwrite:
@@ -1109,8 +1129,8 @@ def main() -> None:
                 r["状态"] = "完成（原样复制）"
             else:
                 log(f"[{idx}/{len(files)}] {r['文件']}: {duration:.2f}s -> {head_txt}"
-                    + H(f"保留 {cut_at:.2f}s (去掉 {removed:.2f}s)",
-                        f"kept {cut_at:.2f}s (removed {removed:.2f}s)"))
+                    + H(f"保留 {kept:.2f}s (去掉 {removed:.2f}s)",
+                        f"kept {kept:.2f}s (removed {removed:.2f}s)"))
                 cut_video(f, dst, head_cut, cut_at, args, ffmpeg)
                 r["状态"] = "完成"
             r["输出"] = str(dst)
@@ -1127,21 +1147,32 @@ def main() -> None:
                    "both": "片尾黑场+闪白"}[args.flash],
                   {"black": "tail black", "white": "tail white flash",
                    "both": "tail black + white"}[args.flash])
-    log("[trim] " + H(
-        f"开始处理 {len(files)} 个视频，检测 {flash_txt}，并发 {args.workers} 线程，"
-        f"扫描窗口 {args.scan_tail}s，异常阈值 {args.anomaly_ratio}，标记阈值 {args.flag_ratio}，"
-        f"严格黑帧阈值 {args.core_threshold}/{args.core_amount}%，"
-        f"视频编码 {args.video_encoder}"
-        + ("（NVENC cq=%d）" % args.hw_cq if "nvenc" in args.video_encoder else "")
-        + ("，片头也裁黑场" if args.head else ""),
-        f"Processing {len(files)} videos, detecting {flash_txt}, {args.workers} workers, "
-        f"scan window {args.scan_tail}s, anomaly {args.anomaly_ratio}, flag {args.flag_ratio}, "
-        f"strict black {args.core_threshold}/{args.core_amount}%, "
-        f"encoder {args.video_encoder}"
-        + (" (NVENC cq=%d)" % args.hw_cq if "nvenc" in args.video_encoder else "")
-        + (", leading black too" if args.head else "")))
-    results = [None] * len(files)
-    sentry = _stop_file()
+    if args.mode == "fixed":
+        log("[trim] " + H(
+            f"固定裁切：{len(files)} 个视频各去掉末尾 {args.seconds}s，并发 {args.workers} 线程，"
+            f"视频编码 {args.video_encoder}"
+            + ("（NVENC cq=%d）" % args.hw_cq if "nvenc" in args.video_encoder else ""),
+            f"Fixed cut: {args.seconds}s off the end of {len(files)} videos, "
+            f"{args.workers} workers, encoder {args.video_encoder}"
+            + (" (NVENC cq=%d)" % args.hw_cq if "nvenc" in args.video_encoder else "")))
+        results = [None] * len(files)
+        sentry = _stop_file()
+    else:
+        log("[trim] " + H(
+            f"开始处理 {len(files)} 个视频，检测 {flash_txt}，并发 {args.workers} 线程，"
+            f"扫描窗口 {args.scan_tail}s，异常阈值 {args.anomaly_ratio}，标记阈值 {args.flag_ratio}，"
+            f"严格黑帧阈值 {args.core_threshold}/{args.core_amount}%，"
+            f"视频编码 {args.video_encoder}"
+            + ("（NVENC cq=%d）" % args.hw_cq if "nvenc" in args.video_encoder else "")
+            + ("，片头也裁黑场" if args.head else ""),
+            f"Processing {len(files)} videos, detecting {flash_txt}, {args.workers} workers, "
+            f"scan window {args.scan_tail}s, anomaly {args.anomaly_ratio}, flag {args.flag_ratio}, "
+            f"strict black {args.core_threshold}/{args.core_amount}%, "
+            f"encoder {args.video_encoder}"
+            + (" (NVENC cq=%d)" % args.hw_cq if "nvenc" in args.video_encoder else "")
+            + (", leading black too" if args.head else "")))
+        results = [None] * len(files)
+        sentry = _stop_file()
     if sentry.exists():
         sentry.unlink()
     threading.Thread(target=_watch_stop_file, args=(sentry,), daemon=True).start()
@@ -1184,8 +1215,19 @@ def main() -> None:
             w = csv.writer(fh)
             cols = ["文件", "原时长(s)", "模式", "类型", "片头去掉(s)", "黑场起点(s)", "裁切点(s)",
                     "去掉(s)", "末帧亮度", "状态", "输出", "异常重扫", "标记复核", "说明"]
+            out_rows = rows
+            if prev_rows:
+                # 断点续跑时不要把记录表覆盖成只剩重跑的几行：
+                # 同名行用新结果，其余历史行原样保留，顺序不变
+                fresh = {r["文件"]: r for r in rows}
+                merged = []
+                for old in prev_rows:
+                    key = old.get("文件", "")
+                    merged.append(fresh.pop(key, old))
+                merged.extend(fresh.values())
+                out_rows = merged
             w.writerow(cols)
-            w.writerows([[r.get(k, "") for k in cols] for r in rows])
+            w.writerows([[r.get(k, "") for k in cols] for r in out_rows])
         log("[trim] " + H(f"清单：{report}", f"Report: {report}"))
 
     # ===== 结尾汇总 =====

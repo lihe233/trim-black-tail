@@ -21,6 +21,7 @@ Built for batch editing: a whole season of footage each ends with seconds to min
 - **Leading black** (optional) with a stricter threshold, so a dark night scene at the start is not mistaken for a field
 - **Resumable**: rerun only the files that failed or were interrupted
 - **Bilingual output**: `--lang en` switches the console to English; the .bat menus can too — see [Language](#language)
+- **One obvious entry point**: a single `01_开始裁剪_双击这里.bat` in the root, all other tools under `tools\`
 - **Non-destructive**: outputs go to `<folder>_no_black` plus a CSV report
 
 ## Requirements
@@ -33,18 +34,26 @@ Built for batch editing: a whole season of footage each ends with seconds to min
 
 ### Windows GUI entry points
 
-Double-click `scan_and_trim.bat`, drag a folder into the window, press Enter, then answer the prompts (pressing Enter on every prompt uses the defaults). When it finishes you can drop the next folder in.
+> **Not sure what to click after downloading? Click `01_开始裁剪_双击这里.bat`.** It is the only entry point in the root folder; every other tool lives in `tools\` and can be ignored.
+
+Double-click it, drag a folder into the window, press Enter, then answer the prompts (pressing Enter on every prompt uses the defaults). When it finishes you can drop the next folder in.
+
+The window shows the tool name, author, Bilibili and repository address before it asks for anything — so you can see what you are running first.
 
 Settings are saved to `trim_config.ini`, so the next run only asks “reuse last settings?” — press Enter.
 
-Three more helpers live next to it:
+What is in the folder:
 
-| File | Purpose |
-|---|---|
-| `scan_and_trim.bat` | One shot: scan the tail, then export the trimmed video |
-| `detect_tail.bat` | Scan only, writes `tail_report.csv` so you can review the list first |
-| `trim_tail.bat` | Cut a fixed number of seconds, no detection |
-| `retry_failed.bat` | Rerun only the files that failed or were interrupted |
+```
+01_开始裁剪_双击这里.bat    the only entry point: scan + trim in one go
+trim_black_tail.py          the engine (the .bat finds Python and calls it)
+tools\
+  只扫描清单.bat            scan only, writes tail_report.csv
+  固定裁末尾N秒.bat         cut a fixed N seconds, no detection
+  只重跑失败.bat            resume: rerun the failed / interrupted files
+```
+
+The three tools under `tools\` locate the engine and config through `..`, so do not move them out on their own (moving the whole folder is fine).
 
 ### Command line
 
@@ -193,7 +202,8 @@ file / duration(s) / mode / type / head_removed(s) / field_start(s) / cut_at(s) 
 
 - Create `STOP.txt` next to the script: it stops after the current file, keeping finished results
 - Closing the console window triggers cleanup and terminates every ffmpeg child process
-- To resume: `retry_failed.bat`, or `--retry-failed report.csv`
+- To resume: `tools\只重跑失败.bat` on the same folder, or `--retry-failed report.csv`
+  the report is merged on resume — earlier rows stay, only matching files are updated
 
 ## Notes
 

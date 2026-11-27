@@ -2,11 +2,24 @@
 setlocal
 chcp 936 >nul
 set "PYTHONIOENCODING=gbk"
+title 视频片尾黑场-闪白 批量裁剪
+
+echo ============================================================
+echo    视频片尾黑场 / 闪白  批量裁剪工具
+echo    作者：lihe233      B站：space.bilibili.com/267072796
+echo    仓库：github.com/lihe233/trim-black-tail
+echo ============================================================
+echo.
+echo  怎么用：把素材文件夹直接拖进本窗口，回车。
+echo          参数一路回车就是默认值，第一次填完会记住，下次只问一句。
+echo          成片输出到“文件夹名_no_black”，原片不会被修改。
+echo          只想先看清单不导出：运行 tools\只扫描清单.bat
+echo.
 
 set "SCRIPT=%~dp0trim_black_tail.py"
 if not exist "%SCRIPT%" (
-  echo [错误/Error] 同目录下找不到 trim_black_tail.py / trim_black_tail.py not found next to this bat.
-  goto :done
+  echo [错误/Error] 同目录下找不到 trim_black_tail.py / not found next to this bat.
+  goto :fail
 )
 
 set "PY="
@@ -16,8 +29,9 @@ for /f "delims=" %%P in ('dir /b /s "C:/Python*/python.exe" 2^>nul') do if not d
 if not defined PY set "PY=python"
 "%PY%" --version >nul 2>&1
 if errorlevel 1 (
-  echo [错误/Error] 找不到 Python / Python not found - install Python 3 or add python.exe to PATH.
-  goto :done
+  echo [错误/Error] 找不到 Python / Python not found.
+  echo   请安装 Python 3 并勾选 Add to PATH，或把 python.exe 所在目录加进 PATH。
+  goto :fail
 )
 
 set "FIRST=%~1"
@@ -81,6 +95,7 @@ goto :saved
 
 :ask
 echo.
+echo --- 参数设置：不填就直接回车用括号里的默认值 / Enter = default ---
 set /p "LANG=输出语言？（zh=中文 / en=English，默认 %LANG%）："
 set /p "SCAN=只扫描末尾多少秒 / seconds to scan from the end? (默认 %SCAN%，0=全片): "
 set /p "WORKERS=并发线程数 / worker threads? (默认 %WORKERS%): "
@@ -122,7 +137,7 @@ if /i "%HEAD%"=="Y" set "HEADARG=--head"
 if /i "%SKIPUND%"=="Y" set "SKIPARG=--skip-undetected"
 
 echo.
-echo 一步完成 / one shot：扫描片尾黑场 + 直接导出裁剪后的视频 (scan the tail then export).
+echo 一步完成 / one shot：扫描片尾黑场 + 直接导出裁剪后的视频
 echo 扫描范围 / scan：末尾 %SCAN% 秒，并发 %WORKERS% 线程
 echo 淡出校验 / fade check：亮度 %LUMA%，最小降幅 %DROP%，二分加密 %LEVELS% 层
 echo 严格黑帧 / strict black：阈值 %CORE%，最短 %CMIN% 秒，闪黑间隔 %FGAP% 秒
@@ -135,7 +150,7 @@ echo 源文件夹 / input ：%SRC%
 echo 输出文件夹 / output：%OUT%
 echo 记录表 / report：%REPORT%
 echo 原视频不会被修改 / source files are never modified.
-echo 中途要停止 / to stop：在脚本同目录新建 STOP.txt，或直接关闭本窗口 (closing this window kills ffmpeg too).
+echo 中途要停止 / to stop：在脚本同目录新建 STOP.txt，或直接关闭本窗口
 echo.
 
 set "TRIM_LANG=%LANG%"
@@ -143,9 +158,15 @@ set "TRIM_LANG=%LANG%"
 
 echo.
 echo 本文件夹完成 / done：%OUT%
-echo 有个别失败 / some failed? 运行 retry_failed.bat 拖入本文件夹即可只重跑失败的。
+echo 有个别失败 / some failed? 运行 tools\只重跑失败.bat，拖入同一个文件夹即可只重跑失败的。
 echo 可以继续输入下一个文件夹 / drop the next folder, or press Enter to quit.
 goto :loop
+
+:fail
+echo.
+echo 出错了，按任意键关闭 / press any key to close...
+pause >nul
+goto :done
 
 :done
 echo.
